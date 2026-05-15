@@ -1,8 +1,8 @@
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub struct CompatdataManager {
-    pub steamapps_dir: PathBuf,
+    steamapps_dir: PathBuf,
 }
 
 impl CompatdataManager {
@@ -13,6 +13,16 @@ impl CompatdataManager {
     pub fn discover() -> Option<Self> {
         let steamapps_dir = find_steamapps_dir()?;
         Some(Self::new(steamapps_dir))
+    }
+
+    pub fn app_compatdata_path(&self, app_id: u32) -> PathBuf {
+        self.steamapps_dir
+            .join("compatdata")
+            .join(app_id.to_string())
+    }
+
+    pub fn steamapps_dir(&self) -> &Path {
+        &self.steamapps_dir
     }
 }
 
@@ -34,10 +44,12 @@ fn find_steamapps_dir() -> Option<PathBuf> {
         }
     };
 
-    for candidate in CANDIDATES.iter() {
-        // TODO: better logging
-        println!("Will search in: {:?}", CANDIDATES);
+    println!("Will search for steamapps directory in candidates:");
+    for c in CANDIDATES {
+        println!("  - {}", home_dir.join(c).display());
+    }
 
+    for candidate in CANDIDATES {
         let candidate_path = home_dir.join(candidate);
         if candidate_path.exists() {
             println!(
