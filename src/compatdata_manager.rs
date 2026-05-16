@@ -247,6 +247,7 @@ impl CompatdataManager {
             .collect()
     }
 }
+
 fn find_steam_root() -> Option<PathBuf> {
     const STEAM_ROOT_CANDIDATES: [&str; 3] = [
         ".steam/steam",
