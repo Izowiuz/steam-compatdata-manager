@@ -12,4 +12,8 @@ pub struct Cli {
     /// "[HOME]/.var/app/com.valvesoftware.Steam/data/Steam/steamapps
     #[arg(long)]
     pub steamapps_dir: Option<PathBuf>,
+
+    /// Move orphaned prefixes to trash
+    #[arg(long)]
+    pub trash_orphans: bool,
 }

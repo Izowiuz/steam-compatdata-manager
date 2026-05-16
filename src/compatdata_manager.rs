@@ -90,19 +90,19 @@ impl CompatdataManager {
 
             let app_id = file_name.to_string();
             let size_bytes = Self::calculate_directory_size(&path);
-            let mut is_unknown = false;
-            let app_name = match Self::get_app_name_from_manifest(&self.steamapps_dir, &app_id) {
-                Some(name) => Some(name),
-                None => match Self::fetch_game_name_from_store(&app_id) {
-                    Some(name) => Some(name),
-                    None => {
-                        is_unknown = true;
-                        None
-                    }
-                },
-            };
 
-            let is_orphaned = app_name.is_none();
+            let mut app_name = None;
+            let mut is_orphaned = false;
+            let mut is_unknown = false;
+
+            if let Some(name) = Self::get_app_name_from_manifest(&self.steamapps_dir, &app_id) {
+                app_name = Some(name);
+            } else if let Some(name) = Self::fetch_game_name_from_store(&app_id) {
+                app_name = Some(name);
+                is_orphaned = true;
+            } else {
+                is_unknown = true;
+            }
 
             compatdata_entries.push(CompatdataEntry {
                 app_id,
@@ -185,7 +185,7 @@ impl CompatdataManager {
         for e in &self.compatdata_entries {
             builder.push_record([
                 e.app_id.to_string(),
-                e.app_name.clone().unwrap_or_else(|| "—".into()),
+                e.app_name.clone().unwrap_or_else(|| "-".into()),
                 e.path.display().to_string(),
                 Self::format_size(e.size_bytes),
                 if e.is_orphaned { "yes" } else { "no" }.into(),
@@ -221,6 +221,20 @@ impl CompatdataManager {
             Self::format_size(total_size),
             Self::format_size(orphan_size),
         );
+    }
+
+    pub fn orphans(&self) -> Vec<&CompatdataEntry> {
+        self.compatdata_entries
+            .iter()
+            .filter(|e| e.is_orphaned)
+            .collect()
+    }
+
+    pub fn trash_orphans(&self) -> Vec<(String, Result<(), trash::Error>)> {
+        self.orphans()
+            .iter()
+            .map(|e| (e.app_id.clone(), trash::delete(&e.path)))
+            .collect()
     }
 }
 fn find_steamapps_dir() -> Option<PathBuf> {
