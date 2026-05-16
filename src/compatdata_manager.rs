@@ -2,6 +2,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 use regex::Regex;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::thread::sleep;
+use std::time::Duration;
 use std::{env, io};
 use tabled::builder::Builder;
 use tabled::settings::Style;
@@ -18,6 +20,7 @@ pub struct CompatdataEntry {
     pub path: PathBuf,
     pub size_bytes: u64,
     pub is_orphaned: bool,
+    pub is_unknown: bool,
 }
 
 impl CompatdataManager {
@@ -51,14 +54,7 @@ impl CompatdataManager {
         Some(Self::new(steamapps_dir).ok()?)
     }
 
-    pub fn app_compatdata_path(&self, app_id: u32) -> PathBuf {
-        self.steamapps_dir
-            .join("compatdata")
-            .join(app_id.to_string())
-    }
-
     pub fn scan_compatdata_dir(&mut self) -> Result<(), io::Error> {
-        // println!("\n");
         println!("Scanning compatdata directory...");
 
         let entries: Vec<_> = self
@@ -94,7 +90,18 @@ impl CompatdataManager {
 
             let app_id = file_name.to_string();
             let size_bytes = Self::calculate_directory_size(&path);
-            let app_name = Self::get_app_name_from_manifest(&self.steamapps_dir, &app_id);
+            let mut is_unknown = false;
+            let app_name = match Self::get_app_name_from_manifest(&self.steamapps_dir, &app_id) {
+                Some(name) => Some(name),
+                None => match Self::fetch_game_name_from_store(&app_id) {
+                    Some(name) => Some(name),
+                    None => {
+                        is_unknown = true;
+                        None
+                    }
+                },
+            };
+
             let is_orphaned = app_name.is_none();
 
             compatdata_entries.push(CompatdataEntry {
@@ -102,7 +109,8 @@ impl CompatdataManager {
                 app_name,
                 path,
                 size_bytes,
-                is_orphaned,
+                is_orphaned: if is_unknown { false } else { is_orphaned },
+                is_unknown,
             });
 
             progress_bar.inc(1);
@@ -155,9 +163,24 @@ impl CompatdataManager {
         }
     }
 
+    fn fetch_game_name_from_store(app_id: &str) -> Option<String> {
+        sleep(Duration::from_millis(1500));
+
+        let url =
+            format!("https://store.steampowered.com/api/appdetails?appids={app_id}&filters=basic");
+        let mut response = ureq::get(&url).call().ok()?;
+        let body: serde_json::Value = response.body_mut().read_json().ok()?;
+
+        let entry = body.get(app_id.to_string())?;
+        if !entry.get("success")?.as_bool()? {
+            return None;
+        }
+        entry.get("data")?.get("name")?.as_str().map(str::to_string)
+    }
+
     pub fn print_entries(&self) {
         let mut builder = Builder::default();
-        builder.push_record(["AppID", "Name", "Path", "Size", "Orphan"]);
+        builder.push_record(["AppID", "Name", "Path", "Size", "Orphan", "Unknown"]);
 
         for e in &self.compatdata_entries {
             builder.push_record([
@@ -166,6 +189,7 @@ impl CompatdataManager {
                 e.path.display().to_string(),
                 Self::format_size(e.size_bytes),
                 if e.is_orphaned { "yes" } else { "no" }.into(),
+                if e.is_unknown { "yes" } else { "no" }.into(),
             ]);
         }
 

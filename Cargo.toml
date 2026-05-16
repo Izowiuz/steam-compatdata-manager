@@ -9,3 +9,5 @@ indicatif = "0.18.4"
 regex = "1.12.3"
 walkdir = "2.5.0"
 tabled = "0.20.0"
+ureq = { version = "3.3.0", features = ["json"] }
+serde_json = "1.0.149"
