@@ -1,7 +1,10 @@
 use std::path::PathBuf;
 
 #[derive(clap::Parser)]
-#[command(version, about = "Simple tool to manage steam compatdata")]
+#[command(
+    version,
+    about = "Simple tool to manage (read - clean) steam compatdata"
+)]
 pub struct Cli {
     /// Path to the steam root directory
     ///
