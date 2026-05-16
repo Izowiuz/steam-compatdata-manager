@@ -15,7 +15,7 @@ fn confirm(prompt: &str) -> bool {
 fn main() {
     let args = cli::Cli::parse();
 
-    let mut manager = match args.steamapps_dir {
+    let mut manager = match args.steam_root {
         Some(path) => match compatdata_manager::CompatdataManager::new(path) {
             Ok(m) => m,
             Err(e) => {
@@ -24,18 +24,15 @@ fn main() {
             }
         },
         None => compatdata_manager::CompatdataManager::discover().unwrap_or_else(|| {
-            eprintln!("Could not find steamapps directory.");
+            eprintln!("Could not find Steam installation.");
             std::process::exit(1);
         }),
     };
 
-    println!(
-        "Found steamapps directory at: {:?}",
-        manager.steamapps_dir()
-    );
+    println!("Found Steam directory at: {:?}", manager.steam_root());
 
     if let Err(e) = manager.scan_compatdata_dir() {
-        eprintln!("Could not scan steamdata directory: {e}");
+        eprintln!("Could not scan compatdata directory: {e}");
         std::process::exit(1);
     }
 

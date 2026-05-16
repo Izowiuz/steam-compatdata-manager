@@ -1,16 +1,17 @@
 use indicatif::{ProgressBar, ProgressStyle};
 use regex::Regex;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::thread::sleep;
 use std::time::Duration;
-use std::{env, io};
 use tabled::builder::Builder;
 use tabled::settings::Style;
 use walkdir::WalkDir;
 
 pub struct CompatdataManager {
-    steamapps_dir: PathBuf,
+    steam_root: PathBuf,
+    library_paths: Vec<PathBuf>,
     compatdata_entries: Vec<CompatdataEntry>,
 }
 
@@ -24,41 +25,47 @@ pub struct CompatdataEntry {
 }
 
 impl CompatdataManager {
-    pub fn new(steamapps_dir: PathBuf) -> Result<Self, String> {
-        if !steamapps_dir.is_dir() {
+    pub fn new(steam_root: PathBuf) -> Result<Self, String> {
+        if !steam_root.is_dir() {
             return Err(format!(
-                "Provided steamapps directory {:?} is not a valid directory.",
-                steamapps_dir
+                "Provided Steam root {:?} is not a valid directory.",
+                steam_root
             ));
         }
 
-        if !steamapps_dir.join("compatdata").is_dir() {
-            return Err(format!(
-                "Provided steamapps directory {:?} does not contain compatdata directory.",
-                steamapps_dir
-            ));
+        let vdf = steam_root.join("config/libraryfolders.vdf");
+        if !vdf.is_file() {
+            return Err(format!("No libraryfolders.vdf found at {:?}", vdf));
+        }
+
+        let library_paths = discover_library_paths(&steam_root);
+
+        if library_paths.is_empty() {
+            return Err(format!("No Steam libraries found in {:?}", vdf));
         }
 
         Ok(Self {
-            steamapps_dir,
+            steam_root,
+            library_paths,
             compatdata_entries: vec![],
         })
     }
 
-    pub fn steamapps_dir(&self) -> &Path {
-        &self.steamapps_dir
+    pub fn steam_root(&self) -> &Path {
+        &self.steam_root
     }
 
     pub fn discover() -> Option<Self> {
-        let steamapps_dir = find_steamapps_dir()?;
-        Some(Self::new(steamapps_dir).ok()?)
+        let steam_root = find_steam_root()?;
+        Some(Self::new(steam_root).ok()?)
     }
 
     pub fn scan_compatdata_dir(&mut self) -> Result<(), io::Error> {
-        println!("Scanning compatdata directory...");
+        println!("Scanning compatdata...");
 
         let entries: Vec<_> = self
-            .steamapps_dir
+            .steam_root
+            .join("steamapps")
             .join("compatdata")
             .read_dir()?
             .collect::<Result<_, _>>()?;
@@ -95,7 +102,7 @@ impl CompatdataManager {
             let mut is_orphaned = false;
             let mut is_unknown = false;
 
-            if let Some(name) = Self::get_app_name_from_manifest(&self.steamapps_dir, &app_id) {
+            if let Some(name) = self.get_app_name_from_manifest(&app_id) {
                 app_name = Some(name);
             } else if let Some(name) = Self::fetch_game_name_from_store(&app_id) {
                 app_name = Some(name);
@@ -139,16 +146,19 @@ impl CompatdataManager {
             .sum()
     }
 
-    fn get_app_name_from_manifest(steamapps_dir: &Path, app_id: &str) -> Option<String> {
-        static RE: OnceLock<Regex> = OnceLock::new();
-        let re = RE.get_or_init(|| Regex::new(r#""name"\s+"([^"]+)""#).unwrap());
+    fn get_app_name_from_manifest(&self, app_id: &str) -> Option<String> {
+        static MANIFEST_NAME_RE: OnceLock<Regex> = OnceLock::new();
+        let re = MANIFEST_NAME_RE.get_or_init(|| Regex::new(r#""name"\s+"([^"]+)""#).unwrap());
 
-        let path = steamapps_dir.join(format!("appmanifest_{app_id}.acf"));
-        let contents = std::fs::read_to_string(path).ok()?;
-
-        re.captures(&contents)?
-            .get(1)
-            .map(|m| m.as_str().to_string())
+        for lib in &self.library_paths {
+            let path = lib.join(format!("appmanifest_{app_id}.acf"));
+            if let Ok(contents) = std::fs::read_to_string(&path) {
+                if let Some(cap) = re.captures(&contents) {
+                    return cap.get(1).map(|m| m.as_str().to_string());
+                }
+            }
+        }
+        None
     }
 
     fn format_size(bytes: u64) -> String {
@@ -237,40 +247,41 @@ impl CompatdataManager {
             .collect()
     }
 }
-fn find_steamapps_dir() -> Option<PathBuf> {
-    const CANDIDATES: [&str; 4] = [
-        ".steam/steam/steamapps",
-        "steamapps",
-        "Steamapps",
-        ".var/app/com.valvesoftware.Steam/data/Steam/steamapps",
+fn find_steam_root() -> Option<PathBuf> {
+    const STEAM_ROOT_CANDIDATES: [&str; 3] = [
+        ".steam/steam",
+        ".local/share/Steam",
+        ".var/app/com.valvesoftware.Steam/data/Steam",
     ];
 
-    let home_dir = match env::home_dir() {
-        Some(dir) => dir,
-        None => {
-            eprintln!(
-                "Could not locate user home directory - pass steamapps directory as an argument."
-            );
-            return None;
-        }
-    };
+    let home = std::env::home_dir()?;
+    STEAM_ROOT_CANDIDATES
+        .iter()
+        .map(|s| home.join(s))
+        .find(|p| p.join("config/libraryfolders.vdf").exists())
+}
 
-    println!("Will search for steamapps directory in candidates:");
-    for c in CANDIDATES {
-        println!("  - {}", home_dir.join(c).display());
+fn discover_library_paths(steam_root: &Path) -> Vec<PathBuf> {
+    static LIB_PATH_RE: OnceLock<Regex> = OnceLock::new();
+    let re = LIB_PATH_RE.get_or_init(|| Regex::new(r#""path"\s+"([^"]+)""#).unwrap());
+
+    let vdf = steam_root.join("config/libraryfolders.vdf");
+    let content = std::fs::read_to_string(&vdf).unwrap_or_default();
+
+    let paths: Vec<PathBuf> = re
+        .captures_iter(&content)
+        .map(|cap| PathBuf::from(cap.get(1).unwrap().as_str()).join("steamapps"))
+        .collect();
+
+    println!(
+        "Found {} Steam libraries in {}:",
+        paths.len(),
+        vdf.display()
+    );
+
+    for p in &paths {
+        println!("  {}", p.display());
     }
 
-    for candidate in CANDIDATES {
-        let candidate_path = home_dir.join(candidate);
-        let compatdata_path = candidate_path.join("compatdata");
-
-        if compatdata_path.is_dir() {
-            println!(
-                "Using steamapps directory: {:?} from predefined candidates.",
-                candidate_path
-            );
-            return Some(candidate_path);
-        }
-    }
-    None
+    paths
 }
