@@ -3,6 +3,8 @@ use regex::Regex;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::{env, io};
+use tabled::builder::Builder;
+use tabled::settings::Style;
 use walkdir::WalkDir;
 
 pub struct CompatdataManager {
@@ -56,6 +58,7 @@ impl CompatdataManager {
     }
 
     pub fn scan_compatdata_dir(&mut self) -> Result<(), io::Error> {
+        // println!("\n");
         println!("Scanning compatdata directory...");
 
         let entries: Vec<_> = self
@@ -64,12 +67,14 @@ impl CompatdataManager {
             .read_dir()?
             .collect::<Result<_, _>>()?;
 
-        let pb = ProgressBar::new(entries.len() as u64);
-        pb.set_style(
+        let progress_bar = ProgressBar::new(entries.len() as u64);
+        progress_bar.set_style(
             ProgressStyle::with_template("[{bar:40}] {pos}/{len} - {msg}")
                 .expect("Could not create progress bar style.")
                 .progress_chars("=> "),
         );
+
+        let mut compatdata_entries: Vec<CompatdataEntry> = vec![];
 
         for entry in entries {
             let path = entry.path();
@@ -81,21 +86,37 @@ impl CompatdataManager {
                 }
             };
 
-            pb.set_message(format!(
+            progress_bar.set_message(format!(
                 "scanning app_id: {} at: {}",
                 file_name,
                 path.display()
             ));
 
+            let app_id = file_name.to_string();
             let size_bytes = Self::calculate_directory_size(&path);
-            let app_name =
-                Self::get_app_name_from_manifest(&self.steamapps_dir, file_name.to_string());
-            let is_orphanded = app_name.is_none();
+            let app_name = Self::get_app_name_from_manifest(&self.steamapps_dir, &app_id);
+            let is_orphaned = app_name.is_none();
 
-            pb.inc(1);
+            compatdata_entries.push(CompatdataEntry {
+                app_id,
+                app_name,
+                path,
+                size_bytes,
+                is_orphaned,
+            });
+
+            progress_bar.inc(1);
         }
 
-        pb.finish_with_message("done.");
+        compatdata_entries.sort_by(|a, b| {
+            b.is_orphaned
+                .cmp(&a.is_orphaned)
+                .then(b.size_bytes.cmp(&a.size_bytes))
+        });
+
+        self.compatdata_entries = compatdata_entries;
+
+        progress_bar.finish_with_message("done.");
 
         Ok(())
     }
@@ -110,7 +131,7 @@ impl CompatdataManager {
             .sum()
     }
 
-    fn get_app_name_from_manifest(steamapps_dir: &Path, app_id: String) -> Option<String> {
+    fn get_app_name_from_manifest(steamapps_dir: &Path, app_id: &str) -> Option<String> {
         static RE: OnceLock<Regex> = OnceLock::new();
         let re = RE.get_or_init(|| Regex::new(r#""name"\s+"([^"]+)""#).unwrap());
 
@@ -121,12 +142,40 @@ impl CompatdataManager {
             .get(1)
             .map(|m| m.as_str().to_string())
     }
-}
 
-impl CompatdataEntry {
-    pub fn from_dir_entry() {}
-}
+    fn format_size(bytes: u64) -> String {
+        const KB: u64 = 1024;
+        const MB: u64 = KB * 1024;
+        const GB: u64 = MB * 1024;
+        match bytes {
+            b if b >= GB => format!("{:.2} GiB", b as f64 / GB as f64),
+            b if b >= MB => format!("{:.1} MiB", b as f64 / MB as f64),
+            b if b >= KB => format!("{:.1} KiB", b as f64 / KB as f64),
+            b => format!("{b} B"),
+        }
+    }
 
+    pub fn print_entries(&self) {
+        let mut builder = Builder::default();
+        builder.push_record(["AppID", "Name", "Path", "Size", "Orphan"]);
+
+        for e in &self.compatdata_entries {
+            builder.push_record([
+                e.app_id.to_string(),
+                e.app_name.clone().unwrap_or_else(|| "—".into()),
+                e.path.display().to_string(),
+                Self::format_size(e.size_bytes),
+                if e.is_orphaned { "yes" } else { "no" }.into(),
+            ]);
+        }
+
+        let mut table = builder.build();
+        table.with(Style::psql());
+
+        println!("\n");
+        println!("{table}");
+    }
+}
 fn find_steamapps_dir() -> Option<PathBuf> {
     const CANDIDATES: [&str; 4] = [
         ".steam/steam/steamapps",

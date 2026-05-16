@@ -25,11 +25,10 @@ fn main() {
         manager.steamapps_dir()
     );
 
-    let result = match manager.scan_compatdata_dir() {
-        Ok(()) => (),
-        Err(e) => {
-            eprintln!("Could not scan steamdata directory: {e}");
-            std::process::exit(1);
-        }
-    };
+    if let Err(e) = manager.scan_compatdata_dir() {
+        eprintln!("Could not scan steamdata directory: {e}");
+        std::process::exit(1);
+    }
+
+    manager.print_entries();
 }
