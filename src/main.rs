@@ -30,5 +30,8 @@ fn main() {
         std::process::exit(1);
     }
 
+    print!("\n\n");
     manager.print_entries();
+    print!("\n");
+    manager.print_summary();
 }

@@ -172,8 +172,31 @@ impl CompatdataManager {
         let mut table = builder.build();
         table.with(Style::psql());
 
-        println!("\n");
         println!("{table}");
+    }
+
+    pub fn print_summary(&self) {
+        let total = self.compatdata_entries.len();
+        let orphans = self
+            .compatdata_entries
+            .iter()
+            .filter(|e| e.is_orphaned)
+            .count();
+        let total_size: u64 = self.compatdata_entries.iter().map(|e| e.size_bytes).sum();
+        let orphan_size: u64 = self
+            .compatdata_entries
+            .iter()
+            .filter(|e| e.is_orphaned)
+            .map(|e| e.size_bytes)
+            .sum();
+
+        println!(
+            "Total: {} prefixes ({} orphans), {} on disk ({} reclaimable)",
+            total,
+            orphans,
+            Self::format_size(total_size),
+            Self::format_size(orphan_size),
+        );
     }
 }
 fn find_steamapps_dir() -> Option<PathBuf> {
